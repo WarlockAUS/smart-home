@@ -1,4 +1,4 @@
-# Blueprint Update Checker
+# Blueprint Update Checker (v1.0)
 
 A generic Home Assistant blueprint that monitors any GitHub-hosted
 blueprint for new releases and notifies you when the author's version
