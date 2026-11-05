@@ -1,5 +1,5 @@
 blueprint:
-  name: Blueprint Update Checker
+  name: Blueprint Update Checker v1.0
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
     change (e.g. "v3.5" in the name or a comment) and notifies you
@@ -31,7 +31,14 @@ blueprint:
         text: {}
     version_tracker:
       name: Version Tracker Helper
-      description: The input_text helper that stores the last seen version for this blueprint.
+      description: >
+        The input_text helper that stores the last seen version for this
+        blueprint. IMPORTANT: immediately after creating this helper,
+        manually set its value to the version you currently have
+        installed (e.g. "2.1"). If left blank, the automation's first
+        run will silently adopt whatever version is currently live on
+        GitHub as your baseline, without alerting you to any existing
+        gap between your installed version and the latest one.
       selector:
         entity:
           domain: input_text
