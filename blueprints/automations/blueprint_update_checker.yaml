@@ -1,0 +1,105 @@
+blueprint:
+  name: Blueprint Update Checker
+  description: >
+    Periodically checks a blueprint's raw GitHub file for a version
+    change (e.g. "v3.5" in the name or a comment) and notifies you
+    when the author has released a newer version than you last saw.
+    Requires a one-time 'rest_command: fetch_raw_text' entry in
+    configuration.yaml, and one input_text helper per tracked blueprint.
+  domain: automation
+  source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/blueprint_update_checker.yaml
+  input:
+    blueprint_label:
+      name: Blueprint Label
+      description: A friendly name for notifications, e.g. "Blackshome Low Battery"
+      selector:
+        text: {}
+    raw_url:
+      name: Raw GitHub URL
+      description: >
+        The raw.githubusercontent.com URL to the blueprint YAML
+        (not the normal github.com page URL).
+      selector:
+        text: {}
+    version_regex:
+      name: Version Regex
+      description: >
+        Regex to extract the version number from the file content.
+        Default matches patterns like "v3.5" or "version: 3.5".
+      default: "[vV]ersion:?\\s*v?([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
+      selector:
+        text: {}
+    version_tracker:
+      name: Version Tracker Helper
+      description: The input_text helper that stores the last seen version for this blueprint.
+      selector:
+        entity:
+          domain: input_text
+    notify_service:
+      name: Notify Service
+      selector:
+        text: {}
+    check_time:
+      name: Daily Check Time
+      default: "09:00:00"
+      selector:
+        time: {}
+
+mode: single
+
+variables:
+  blueprint_label: !input blueprint_label
+  version_regex: !input version_regex
+  version_tracker: !input version_tracker
+  notify_service: !input notify_service
+
+trigger:
+  - trigger: time
+    at: !input check_time
+  - trigger: homeassistant
+    event: start
+
+condition: []
+
+action:
+  - action: rest_command.fetch_raw_text
+    data:
+      url: !input raw_url
+    response_variable: fetch_result
+
+  - variables:
+      latest_version: >-
+        {% set m = fetch_result.content | regex_findall(version_regex) %}
+        {{ m[0] if m else 'unknown' }}
+      stored_version: "{{ states(version_tracker) }}"
+
+  - choose:
+      # First run — establish a baseline, don't alert
+      - conditions:
+          - condition: template
+            value_template: "{{ stored_version in ['unknown', '', 'unavailable'] }}"
+        sequence:
+          - action: input_text.set_value
+            target:
+              entity_id: !input version_tracker
+            data:
+              value: "{{ latest_version }}"
+
+      # Version has changed since we last checked — alert and update tracker
+      - conditions:
+          - condition: template
+            value_template: "{{ latest_version != 'unknown' and latest_version != stored_version }}"
+        sequence:
+          - action: "{{ notify_service }}"
+            data:
+              title: "📦 Blueprint update available"
+              message: >-
+                {{ blueprint_label }} has a new version: {{ latest_version }}
+                (you have {{ stored_version }}).
+              data:
+                tag: "blueprint_update_{{ blueprint_label }}"
+          - action: input_text.set_value
+            target:
+              entity_id: !input version_tracker
+            data:
+              value: "{{ latest_version }}"
