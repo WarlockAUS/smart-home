@@ -1,9 +1,9 @@
 blueprint:
-  name: Blueprint Update Checker v1.0
+  name: Blueprint Update Checker v1.1
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
-    change (e.g. "v3.5" in the name or a comment) and notifies you
-    when the author has released a newer version than you last saw.
+    change (e.g. "v3.5" in the top-level blueprint name) and notifies
+    you when the author has released a newer version than you last saw.
     Requires a one-time 'rest_command: fetch_raw_text' entry in
     configuration.yaml, and one input_text helper per tracked blueprint.
   domain: automation
@@ -25,8 +25,13 @@ blueprint:
       name: Version Regex
       description: >
         Regex to extract the version number from the file content.
-        Default matches patterns like "v3.5" or "version: 3.5".
-      default: "[vV]ersion:?\\s*v?([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
+        The default is anchored to the blueprint's top-level "name:"
+        line (exactly two spaces of indentation) to avoid false
+        matches against unrelated text elsewhere in the file, such as
+        example text inside input descriptions. Only change this if
+        a tracked blueprint's author uses a different naming
+        convention than "Some Name vX.X".
+      default: "^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
       selector:
         text: {}
     version_tracker:
@@ -76,7 +81,7 @@ action:
 
   - variables:
       latest_version: >-
-        {% set m = fetch_result.content | regex_findall(version_regex) %}
+        {% set m = fetch_result.content | regex_findall(version_regex, ignorecase=False) %}
         {{ m[0] if m else 'unknown' }}
       stored_version: "{{ states(version_tracker) }}"
 
