@@ -1,5 +1,5 @@
 blueprint:
-  name: Blueprint Update Checker v1.1
+  name: Blueprint Update Checker v1.2
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
     change (e.g. "v3.5" in the top-level blueprint name) and notifies
@@ -26,12 +26,13 @@ blueprint:
       description: >
         Regex to extract the version number from the file content.
         The default is anchored to the blueprint's top-level "name:"
-        line (exactly two spaces of indentation) to avoid false
-        matches against unrelated text elsewhere in the file, such as
-        example text inside input descriptions. Only change this if
-        a tracked blueprint's author uses a different naming
-        convention than "Some Name vX.X".
-      default: "^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
+        line (exactly two spaces of indentation) using an inline
+        multiline flag (?m), so "^" matches the start of that line
+        rather than only the start of the whole file. This avoids
+        false matches against unrelated text elsewhere in the file.
+        Only change this if a tracked blueprint's author uses a
+        different naming convention than "Some Name vX.X".
+      default: "(?m)^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
       selector:
         text: {}
     version_tracker:
@@ -86,7 +87,6 @@ action:
       stored_version: "{{ states(version_tracker) }}"
 
   - choose:
-      # First run — establish a baseline, don't alert
       - conditions:
           - condition: template
             value_template: "{{ stored_version in ['unknown', '', 'unavailable'] }}"
@@ -97,7 +97,6 @@ action:
             data:
               value: "{{ latest_version }}"
 
-      # Version has changed since we last checked — alert and update tracker
       - conditions:
           - condition: template
             value_template: "{{ latest_version != 'unknown' and latest_version != stored_version }}"
