@@ -1,24 +1,23 @@
 blueprint:
-  name: Blueprint Update Checker v1.5
+  name: Blueprint Update Checker v1.6
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
-    change (e.g. "v3.5" in the top-level blueprint name) and notifies
-    you when the author has released a newer version than you last saw.
-    Both the persistent notification and the mobile push are optional.
-    If an update is detected and both are disabled, a one-off warning
-    notification is still raised so updates are never missed silently.
-    Requires a one-time 'rest_command: fetch_raw_text' entry in
-    configuration.yaml, and one input_text helper per tracked
-    blueprint.
+    change and notifies you when the author has released a newer
+    version than you last saw. Tries the primary regex first (default:
+    anchored to the top-level "name:" line); if no match is found,
+    tries two fallback patterns covering "**Version: X.X**" and
+    "**Version**: X.X" style conventions seen in some blueprint
+    descriptions. Both notification channels are optional, with a
+    forced safety-net warning if both are disabled. Requires a
+    one-time 'rest_command: fetch_raw_text' entry in configuration.yaml,
+    and one input_text helper per tracked blueprint.
 
-    Note: this checker relies on the tracked blueprint author stating
-    their version number in the top-level "name:" field (e.g. "Some
-    Blueprint v1.2" or "Some Blueprint (v2026.11.13)"). There is no
-    official version field in the Home Assistant blueprint schema, so
-    this is a convention, not a guarantee. Blueprints that state their
-    version elsewhere (e.g. free text in the description) are not
-    reliably supported — deliberately, to avoid brittle regex matching
-    against unstructured text. See docs for details.
+    Note: there is no official version field in the Home Assistant
+    blueprint schema. Version conventions vary by author. This
+    blueprint deliberately supports only the three conventions it has
+    actually been tested against (see docs) rather than attempting a
+    fully generic pattern — further variants are expected to exist and
+    are intentionally out of scope.
   domain: automation
   source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/blueprint_update_checker.yaml
   input:
@@ -35,17 +34,31 @@ blueprint:
       selector:
         text: {}
     version_regex:
-      name: Version Regex
+      name: Version Regex (Primary)
       description: >
-        Regex to extract the version number from the file content.
-        The default is anchored to the blueprint's top-level "name:"
-        line (exactly two spaces of indentation) using an inline
-        multiline flag (?m), so "^" matches the start of that line
-        rather than only the start of the whole file. This avoids
-        false matches against unrelated text elsewhere in the file.
-        Only change this if a tracked blueprint's author uses a
-        different naming convention within the "name:" field itself.
+        Tried first. Anchored to the blueprint's top-level "name:"
+        line using an inline multiline flag (?m), e.g. matches
+        "name: Some Blueprint v1.4" or "name: Some Blueprint
+        (v2026.11.13)".
       default: "(?m)^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
+      selector:
+        text: {}
+    version_regex_fallback_1:
+      name: Version Regex (Fallback 1)
+      description: >
+        Tried if the primary finds no match. Matches a
+        "**Version: X.X**" style line (asterisks wrapping the whole
+        phrase).
+      default: "(?i)\\*\\*version:\\s*([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)\\*\\*"
+      selector:
+        text: {}
+    version_regex_fallback_2:
+      name: Version Regex (Fallback 2)
+      description: >
+        Tried if the primary and Fallback 1 find no match. Matches a
+        "**Version**: X.X" style line (asterisks wrapping only the
+        word "Version").
+      default: "(?i)\\*\\*version\\*\\*:\\s*([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
       selector:
         text: {}
     version_tracker:
@@ -99,6 +112,8 @@ mode: single
 variables:
   blueprint_label: !input blueprint_label
   version_regex: !input version_regex
+  version_regex_fallback_1: !input version_regex_fallback_1
+  version_regex_fallback_2: !input version_regex_fallback_2
   version_tracker: !input version_tracker
   enable_persistent_notification: !input enable_persistent_notification
   enable_mobile_notify: !input enable_mobile_notify
@@ -121,7 +136,17 @@ action:
   - variables:
       latest_version: >-
         {% set m = fetch_result.content | regex_findall(version_regex, ignorecase=False) %}
-        {{ m[0] if m else 'unknown' }}
+        {% if m %}
+          {{ m[0] }}
+        {% else %}
+          {% set f1 = fetch_result.content | regex_findall(version_regex_fallback_1) %}
+          {% if f1 %}
+            {{ f1[0] }}
+          {% else %}
+            {% set f2 = fetch_result.content | regex_findall(version_regex_fallback_2) %}
+            {{ f2[0] if f2 else 'unknown' }}
+          {% endif %}
+        {% endif %}
       stored_version: "{{ states(version_tracker) }}"
 
   - choose:
