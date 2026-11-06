@@ -1,13 +1,14 @@
 blueprint:
-  name: Blueprint Update Checker v1.4
+  name: Blueprint Update Checker v1.5
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
     change (e.g. "v3.5" in the top-level blueprint name) and notifies
     you when the author has released a newer version than you last saw.
-    Always raises a persistent notification in the Home Assistant
-    frontend when a change is detected; a mobile push notification is
-    optional. Requires a one-time 'rest_command: fetch_raw_text' entry
-    in configuration.yaml, and one input_text helper per tracked
+    Both the persistent notification and the mobile push are optional.
+    If an update is detected and both are disabled, a one-off warning
+    notification is still raised so updates are never missed silently.
+    Requires a one-time 'rest_command: fetch_raw_text' entry in
+    configuration.yaml, and one input_text helper per tracked
     blueprint.
 
     Note: this checker relies on the tracked blueprint author stating
@@ -60,13 +61,20 @@ blueprint:
       selector:
         entity:
           domain: input_text
+    enable_persistent_notification:
+      name: Enable Persistent Notification
+      description: >
+        If enabled, raises a persistent notification in the Home
+        Assistant frontend (bell icon) when an update is detected,
+        which stays visible until manually dismissed.
+      default: true
+      selector:
+        boolean: {}
     enable_mobile_notify:
       name: Enable Mobile Push Notification
       description: >
         If enabled, also sends a push notification via the selected
-        notify target when an update is detected, in addition to the
-        persistent notification (which always fires regardless of
-        this setting).
+        notify target when an update is detected.
       default: true
       selector:
         boolean: {}
@@ -92,6 +100,7 @@ variables:
   blueprint_label: !input blueprint_label
   version_regex: !input version_regex
   version_tracker: !input version_tracker
+  enable_persistent_notification: !input enable_persistent_notification
   enable_mobile_notify: !input enable_mobile_notify
   notify_target: !input notify_target
 
@@ -132,14 +141,19 @@ action:
           - condition: template
             value_template: "{{ latest_version != 'unknown' and latest_version != stored_version }}"
         sequence:
-          - action: persistent_notification.create
-            data:
-              notification_id: "blueprint_update_{{ blueprint_label }}"
-              title: "📦 {{ blueprint_label }} update available"
-              message: >-
-                A new version ({{ latest_version }}) is available. You
-                were tracking {{ stored_version }}. Re-import the
-                blueprint, then dismiss this notification.
+          - if:
+              - condition: template
+                value_template: "{{ enable_persistent_notification }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: "blueprint_update_{{ blueprint_label }}"
+                  title: "📦 {{ blueprint_label }} update available"
+                  message: >-
+                    A new version ({{ latest_version }}) is available. You
+                    were tracking {{ stored_version }}. Re-import the
+                    blueprint, then dismiss this notification.
+
           - if:
               - condition: template
                 value_template: "{{ enable_mobile_notify and notify_target != '' }}"
@@ -152,6 +166,26 @@ action:
                   message: >-
                     {{ blueprint_label }} has a new version:
                     {{ latest_version }} (you have {{ stored_version }}).
+
+          # Safety net — if both channels are disabled, force a warning
+          # anyway so the update is never missed silently.
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ not enable_persistent_notification and not
+                  (enable_mobile_notify and notify_target != '') }}
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: "blueprint_update_{{ blueprint_label }}_warning"
+                  title: "⚠️ {{ blueprint_label }} update available (no channels enabled)"
+                  message: >-
+                    A new version ({{ latest_version }}) was detected, but
+                    both the persistent notification and mobile push are
+                    currently disabled for this tracker. This warning was
+                    raised anyway so the update isn't missed. You were
+                    tracking {{ stored_version }}.
+
           - action: input_text.set_value
             target:
               entity_id: !input version_tracker
