@@ -1,5 +1,5 @@
 blueprint:
-  name: Cat Flap - Curfew with Reconcile Recovery v2.0
+  name: Cat Flap - Curfew with Reconcile Recovery v2.1
   description: >
     Enforces a curfew lock schedule for a Sure Petcare cat flap controlled
     via Home Assistant's native lock entities (lock.*_locked_in,
@@ -9,6 +9,11 @@ blueprint:
     it if they don't match - recovering from a missed trigger, a dropped
     connection, a battery change, or an HA restart, rather than relying on
     a single fire-once schedule with no feedback.
+
+    Tip: inside any of the optional notification actions below, you can
+    reference {{ desired_mode }} and {{ actual_mode }} to describe exactly
+    what changed, e.g. "Corrected lock state: was {{ actual_mode }}, now
+    {{ desired_mode }}".
   domain: automation
   source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/cat_flap_curfew.yaml
   input:
@@ -108,6 +113,18 @@ blueprint:
             - label: "Every 30 minutes"
               value: "/30"
 
+    presence_debounce:
+      name: Pet presence debounce
+      description: >
+        How long a pet presence sensor must hold its new state before a
+        "cat in / cat out" notification fires. Filters out rapid
+        flicker if a cat lingers right at the sensor's detection
+        threshold.
+      default:
+        seconds: 5
+      selector:
+        duration: {}
+
     battery_alert:
       name: Battery Alert
       icon: mdi:battery-alert
@@ -168,7 +185,8 @@ blueprint:
             schedule and had to be corrected - whether that's from a
             reconnect, a missed trigger, or the periodic safety check
             catching drift. This is the "something unexpected happened"
-            alert.
+            alert. Reference {{ desired_mode }} and {{ actual_mode }} in
+            your message for details.
           default: []
           selector:
             action: {}
@@ -222,10 +240,12 @@ trigger:
   - trigger: state
     entity_id: !input pet_presence_entity
     to: "on"
+    for: !input presence_debounce
     id: pet_in
   - trigger: state
     entity_id: !input pet_presence_entity
     to: "off"
+    for: !input presence_debounce
     id: pet_out
 
 action:
@@ -360,4 +380,5 @@ action:
 
     default: []
 
-mode: single
+mode: queued
+max: 10
