@@ -9,6 +9,15 @@ blueprint:
     optional. Requires a one-time 'rest_command: fetch_raw_text' entry
     in configuration.yaml, and one input_text helper per tracked
     blueprint.
+
+    Note: this checker relies on the tracked blueprint author stating
+    their version number in the top-level "name:" field (e.g. "Some
+    Blueprint v1.2" or "Some Blueprint (v2026.11.13)"). There is no
+    official version field in the Home Assistant blueprint schema, so
+    this is a convention, not a guarantee. Blueprints that state their
+    version elsewhere (e.g. free text in the description) are not
+    reliably supported — deliberately, to avoid brittle regex matching
+    against unstructured text. See docs for details.
   domain: automation
   source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/blueprint_update_checker.yaml
   input:
@@ -34,7 +43,7 @@ blueprint:
         rather than only the start of the whole file. This avoids
         false matches against unrelated text elsewhere in the file.
         Only change this if a tracked blueprint's author uses a
-        different naming convention than "Some Name vX.X".
+        different naming convention within the "name:" field itself.
       default: "(?m)^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
       selector:
         text: {}
