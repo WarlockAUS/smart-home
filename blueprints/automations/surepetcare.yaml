@@ -13,7 +13,7 @@ blueprint:
   source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/cat_flap_curfew.yaml
   input:
     lock_in_entity:
-      name: "Locked In" lock entity
+      name: Locked In lock entity
       description: >
         The lock entity that, when locked, puts the flap into "locked in"
         mode (cats can enter, can't go back out). E.g.
@@ -23,7 +23,7 @@ blueprint:
           domain: lock
 
     lock_out_entity:
-      name: "Locked Out" lock entity
+      name: Locked Out lock entity
       description: >
         The lock entity that, when locked, puts the flap into "locked out"
         mode (cats can go out, can't come back in). E.g.
@@ -33,7 +33,7 @@ blueprint:
           domain: lock
 
     lock_all_entity:
-      name: "Locked All" lock entity
+      name: Locked All lock entity
       description: >
         The lock entity that, when locked, puts the flap into "locked all"
         mode (no entry or exit). E.g. lock.cat_door_locked_all
