@@ -1,193 +1,78 @@
-blueprint:
-  name: Blueprint Update Checker v1.5
-  description: >
-    Periodically checks a blueprint's raw GitHub file for a version
-    change (e.g. "v3.5" in the top-level blueprint name) and notifies
-    you when the author has released a newer version than you last saw.
-    Both the persistent notification and the mobile push are optional.
-    If an update is detected and both are disabled, a one-off warning
-    notification is still raised so updates are never missed silently.
-    Requires a one-time 'rest_command: fetch_raw_text' entry in
-    configuration.yaml, and one input_text helper per tracked
-    blueprint.
+# Blueprint Update Checker (v1.6)
 
-    Note: this checker relies on the tracked blueprint author stating
-    their version number in the top-level "name:" field (e.g. "Some
-    Blueprint v1.2" or "Some Blueprint (v2026.11.13)"). There is no
-    official version field in the Home Assistant blueprint schema, so
-    this is a convention, not a guarantee. Blueprints that state their
-    version elsewhere (e.g. free text in the description) are not
-    reliably supported — deliberately, to avoid brittle regex matching
-    against unstructured text. See docs for details.
-  domain: automation
-  source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/blueprint_update_checker.yaml
-  input:
-    blueprint_label:
-      name: Blueprint Label
-      description: A friendly name for notifications, e.g. "Blackshome Low Battery"
-      selector:
-        text: {}
-    raw_url:
-      name: Raw GitHub URL
-      description: >
-        The raw.githubusercontent.com URL to the blueprint YAML
-        (not the normal github.com page URL).
-      selector:
-        text: {}
-    version_regex:
-      name: Version Regex
-      description: >
-        Regex to extract the version number from the file content.
-        The default is anchored to the blueprint's top-level "name:"
-        line (exactly two spaces of indentation) using an inline
-        multiline flag (?m), so "^" matches the start of that line
-        rather than only the start of the whole file. This avoids
-        false matches against unrelated text elsewhere in the file.
-        Only change this if a tracked blueprint's author uses a
-        different naming convention within the "name:" field itself.
-      default: "(?m)^  name:\\s*.*v([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
-      selector:
-        text: {}
-    version_tracker:
-      name: Version Tracker Helper
-      description: >
-        The input_text helper that stores the last seen version for this
-        blueprint. IMPORTANT: immediately after creating this helper,
-        manually set its value to the version you currently have
-        installed (e.g. "2.1"). If left blank, the automation's first
-        run will silently adopt whatever version is currently live on
-        GitHub as your baseline, without alerting you to any existing
-        gap between your installed version and the latest one.
-      selector:
-        entity:
-          domain: input_text
-    enable_persistent_notification:
-      name: Enable Persistent Notification
-      description: >
-        If enabled, raises a persistent notification in the Home
-        Assistant frontend (bell icon) when an update is detected,
-        which stays visible until manually dismissed.
-      default: true
-      selector:
-        boolean: {}
-    enable_mobile_notify:
-      name: Enable Mobile Push Notification
-      description: >
-        If enabled, also sends a push notification via the selected
-        notify target when an update is detected.
-      default: true
-      selector:
-        boolean: {}
-    notify_target:
-      name: Notify Target
-      description: >
-        Select the notify entity to send the optional mobile push to
-        (e.g. your phone). Only required if "Enable Mobile Push
-        Notification" is turned on.
-      default: ""
-      selector:
-        entity:
-          domain: notify
-    check_time:
-      name: Daily Check Time
-      default: "09:00:00"
-      selector:
-        time: {}
+A generic Home Assistant blueprint that monitors any GitHub-hosted
+blueprint for new releases and notifies you when the author's version
+has moved ahead of the version you last saw. Built to cover the gap
+left by blueprints that aren't distributed via HACS, where Home
+Assistant has no native "update available" notification.
 
-mode: single
+## How it works
 
-variables:
-  blueprint_label: !input blueprint_label
-  version_regex: !input version_regex
-  version_tracker: !input version_tracker
-  enable_persistent_notification: !input enable_persistent_notification
-  enable_mobile_notify: !input enable_mobile_notify
-  notify_target: !input notify_target
+Once a day (and once on Home Assistant restart), the automation
+fetches the raw YAML file of a tracked blueprint from GitHub, and
+tries up to three regex patterns in order to extract a version
+string: a primary pattern anchored to the blueprint's top-level
+`name:` field, and two fallback patterns covering common "Version"
+text conventions seen in some blueprint descriptions. The first
+pattern that finds a match wins. That value is compared against the
+last version you recorded in an `input_text` helper. If the live
+version differs from your stored version, you're notified via
+whichever channel(s) are enabled, and the helper is updated to the
+new value. If they match, nothing happens — no noise, no duplicate
+alerts.
 
-trigger:
-  - trigger: time
-    at: !input check_time
-  - trigger: homeassistant
-    event: start
+## Scope and Limitations
 
-condition: []
+There is no official version field in the Home Assistant blueprint
+schema — versioning is purely a community convention, applied
+inconsistently across authors. This checker deliberately supports
+only the specific conventions it has been tested against, rather than
+attempting a fully generic pattern that tries to catch every possible
+style:
 
-action:
-  - action: rest_command.fetch_raw_text
-    data:
-      url: !input raw_url
-    response_variable: fetch_result
+1. **Primary** — version embedded in the top-level `name:` field,
+   e.g. `name: Some Blueprint v1.4` or
+   `name: Some Blueprint (v2026.11.13)`.
+2. **Fallback 1** — a `**Version: X.X**` style line (asterisks
+   wrapping the whole phrase, including the colon).
+3. **Fallback 2** — a `**Version**: X.X` style line (asterisks
+   wrapping only the word "Version", colon outside).
 
-  - variables:
-      latest_version: >-
-        {% set m = fetch_result.content | regex_findall(version_regex, ignorecase=False) %}
-        {{ m[0] if m else 'unknown' }}
-      stored_version: "{{ states(version_tracker) }}"
+Deliberately out of scope: any other convention not listed above —
+including plain unbolded "Version:" text, version numbers embedded
+in free-flowing prose, or changelog-style entries. Earlier drafts
+experimented with broader, more generic patterns intended to catch
+any possible phrasing, but this was dropped in favour of a small,
+precisely-tested set — chasing every author's personal formatting
+convention produces brittle regex and a growing maintenance burden
+for diminishing benefit. Each additional pattern here was added only
+after being confirmed against a real, specific file.
 
-  - choose:
-      # First run — establish a baseline, don't alert
-      - conditions:
-          - condition: template
-            value_template: "{{ stored_version in ['unknown', '', 'unavailable'] }}"
-        sequence:
-          - action: input_text.set_value
-            target:
-              entity_id: !input version_tracker
-            data:
-              value: "{{ latest_version }}"
+**Practical guidance:** if a blueprint you want to track doesn't
+match any of the three supported conventions, this checker won't
+reliably detect updates to it. In that case, periodically re-importing
+the blueprint manually (which always pulls the latest content
+regardless of version text) is the simpler and more honest approach.
 
-      # Version has changed since we last checked — alert and update tracker
-      - conditions:
-          - condition: template
-            value_template: "{{ latest_version != 'unknown' and latest_version != stored_version }}"
-        sequence:
-          - if:
-              - condition: template
-                value_template: "{{ enable_persistent_notification }}"
-            then:
-              - action: persistent_notification.create
-                data:
-                  notification_id: "blueprint_update_{{ blueprint_label }}"
-                  title: "📦 {{ blueprint_label }} update available"
-                  message: >-
-                    A new version ({{ latest_version }}) is available. You
-                    were tracking {{ stored_version }}. Re-import the
-                    blueprint, then dismiss this notification.
+**Confirmed working examples:**
+- This blueprint itself (`name: Blueprint Update Checker v1.6`) — Primary pattern
+- [NSPanel Easy Configuration](https://github.com/edwardtfn/NSPanel-Easy) (`name: NSPanel Easy Configuration (v2026.11.13)`) — Primary pattern
+- A blueprint using `**Version**: 5.5.9` style — Fallback 2 pattern
 
-          - if:
-              - condition: template
-                value_template: "{{ enable_mobile_notify and notify_target != '' }}"
-            then:
-              - action: notify.send_message
-                target:
-                  entity_id: "{{ notify_target }}"
-                data:
-                  title: "📦 Blueprint update available"
-                  message: >-
-                    {{ blueprint_label }} has a new version:
-                    {{ latest_version }} (you have {{ stored_version }}).
+**Not currently supported:**
+- Blackshome's Low Battery Notifications and Actions blueprint —
+  exact version convention not yet confirmed against the three
+  supported patterns. Track via periodic manual re-import instead.
 
-          # Safety net — if both channels are disabled, force a warning
-          # anyway so the update is never missed silently.
-          - if:
-              - condition: template
-                value_template: >-
-                  {{ not enable_persistent_notification and not
-                  (enable_mobile_notify and notify_target != '') }}
-            then:
-              - action: persistent_notification.create
-                data:
-                  notification_id: "blueprint_update_{{ blueprint_label }}_warning"
-                  title: "⚠️ {{ blueprint_label }} update available (no channels enabled)"
-                  message: >-
-                    A new version ({{ latest_version }}) was detected, but
-                    both the persistent notification and mobile push are
-                    currently disabled for this tracker. This warning was
-                    raised anyway so the update isn't missed. You were
-                    tracking {{ stored_version }}.
+## Prerequisites
 
-          - action: input_text.set_value
-            target:
-              entity_id: !input version_tracker
-            data:
-              value: "{{ latest_version }}"
+### 1. One-time `rest_command` setup
+
+Add the following to your `configuration.yaml`. This only needs to
+be done once, regardless of how many blueprints you track afterwards.
+
+```yaml
+rest_command:
+  fetch_raw_text:
+    url: "{{ url }}"
+    method: GET
