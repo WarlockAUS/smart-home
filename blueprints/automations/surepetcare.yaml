@@ -1,0 +1,363 @@
+blueprint:
+  name: Cat Flap - Curfew with Reconcile Recovery v2.0
+  description: >
+    Enforces a curfew lock schedule for a Sure Petcare cat flap controlled
+    via Home Assistant's native lock entities (lock.*_locked_in,
+    lock.*_locked_out, lock.*_locked_all). Because these report real,
+    readable state, this blueprint periodically checks the flap's actual
+    lock state against what it should be for the time of day, and corrects
+    it if they don't match - recovering from a missed trigger, a dropped
+    connection, a battery change, or an HA restart, rather than relying on
+    a single fire-once schedule with no feedback.
+  domain: automation
+  source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/cat_flap_curfew.yaml
+  input:
+    lock_in_entity:
+      name: "Locked In" lock entity
+      description: >
+        The lock entity that, when locked, puts the flap into "locked in"
+        mode (cats can enter, can't go back out). E.g.
+        lock.cat_door_locked_in
+      selector:
+        entity:
+          domain: lock
+
+    lock_out_entity:
+      name: "Locked Out" lock entity
+      description: >
+        The lock entity that, when locked, puts the flap into "locked out"
+        mode (cats can go out, can't come back in). E.g.
+        lock.cat_door_locked_out
+      selector:
+        entity:
+          domain: lock
+
+    lock_all_entity:
+      name: "Locked All" lock entity
+      description: >
+        The lock entity that, when locked, puts the flap into "locked all"
+        mode (no entry or exit). E.g. lock.cat_door_locked_all
+      selector:
+        entity:
+          domain: lock
+
+    connectivity_entity:
+      name: Flap connectivity sensor
+      description: The binary_sensor that reports whether the flap is online.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    curfew_start:
+      name: Curfew start time
+      selector:
+        time: {}
+
+    curfew_end:
+      name: Curfew end time
+      selector:
+        time: {}
+
+    start_lock_state:
+      name: Lock state at curfew start
+      default: locked_in
+      selector:
+        select:
+          options:
+            - label: "Unlocked (in and out)"
+              value: unlocked
+            - label: "Locked in (can enter, can't go back out)"
+              value: locked_in
+            - label: "Locked out (can go out, can't come back in)"
+              value: locked_out
+            - label: "Locked all (no entry or exit)"
+              value: locked_all
+
+    end_lock_state:
+      name: Lock state at curfew end
+      default: unlocked
+      selector:
+        select:
+          options:
+            - label: "Unlocked (in and out)"
+              value: unlocked
+            - label: "Locked in (can enter, can't go back out)"
+              value: locked_in
+            - label: "Locked out (can go out, can't come back in)"
+              value: locked_out
+            - label: "Locked all (no entry or exit)"
+              value: locked_all
+
+    reconcile_interval:
+      name: Reconciliation check interval
+      description: >
+        How often to check that the flap's actual lock state matches what
+        it should be, and correct it if not. This is the safety net that
+        catches anything the scheduled triggers miss. Shorter = faster
+        recovery, at the cost of slightly more frequent checks.
+      default: "/10"
+      selector:
+        select:
+          options:
+            - label: "Every 5 minutes"
+              value: "/5"
+            - label: "Every 10 minutes"
+              value: "/10"
+            - label: "Every 15 minutes"
+              value: "/15"
+            - label: "Every 30 minutes"
+              value: "/30"
+
+    battery_alert:
+      name: Battery Alert
+      icon: mdi:battery-alert
+      collapsed: false
+      input:
+        battery_entity:
+          name: Battery sensor
+          selector:
+            entity:
+              domain: sensor
+              device_class: battery
+        battery_threshold:
+          name: Low battery threshold (%)
+          default: 20
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: box
+        battery_reminder_time:
+          name: Daily reminder time
+          default: "09:00:00"
+          selector:
+            time: {}
+
+    pet_presence:
+      name: Pet Presence
+      icon: mdi:cat
+      collapsed: false
+      input:
+        pet_presence_entity:
+          name: Pet presence sensor(s)
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+
+    notifications:
+      name: Notifications (optional)
+      icon: mdi:bell-outline
+      collapsed: true
+      input:
+        notify_on_curfew_start:
+          name: Notify - curfew started
+          default: []
+          selector:
+            action: {}
+        notify_on_curfew_end:
+          name: Notify - curfew ended
+          default: []
+          selector:
+            action: {}
+        notify_on_reconnect_recovery:
+          name: Notify - lock state corrected
+          description: >
+            Runs whenever the flap's actual state didn't match the
+            schedule and had to be corrected - whether that's from a
+            reconnect, a missed trigger, or the periodic safety check
+            catching drift. This is the "something unexpected happened"
+            alert.
+          default: []
+          selector:
+            action: {}
+        notify_on_low_battery:
+          name: Notify - low battery
+          default: []
+          selector:
+            action: {}
+        notify_on_pet_in:
+          name: Notify - a cat came in
+          default: []
+          selector:
+            action: {}
+        notify_on_pet_out:
+          name: Notify - a cat went out
+          default: []
+          selector:
+            action: {}
+
+variables:
+  curfew_start: !input curfew_start
+  curfew_end: !input curfew_end
+  start_lock_state: !input start_lock_state
+  end_lock_state: !input end_lock_state
+  lock_in_entity: !input lock_in_entity
+  lock_out_entity: !input lock_out_entity
+  lock_all_entity: !input lock_all_entity
+
+trigger:
+  - trigger: time
+    at: !input curfew_start
+    id: curfew_start_tick
+  - trigger: time
+    at: !input curfew_end
+    id: curfew_end_tick
+  - trigger: state
+    entity_id: !input connectivity_entity
+    to: "on"
+    id: reconnect
+  - trigger: time_pattern
+    minutes: !input reconcile_interval
+    id: reconcile_tick
+  - trigger: numeric_state
+    entity_id: !input battery_entity
+    below: !input battery_threshold
+    for: "00:10:00"
+    id: battery_low
+  - trigger: time
+    at: !input battery_reminder_time
+    id: battery_daily
+  - trigger: state
+    entity_id: !input pet_presence_entity
+    to: "on"
+    id: pet_in
+  - trigger: state
+    entity_id: !input pet_presence_entity
+    to: "off"
+    id: pet_out
+
+action:
+  - variables:
+      desired_mode: >-
+        {% set now_t = now().strftime('%H:%M:%S') %}
+        {% if curfew_start <= curfew_end %}
+          {{ start_lock_state if (now_t >= curfew_start and now_t < curfew_end) else end_lock_state }}
+        {% else %}
+          {{ start_lock_state if (now_t >= curfew_start or now_t < curfew_end) else end_lock_state }}
+        {% endif %}
+      actual_mode: >-
+        {% if is_state(lock_all_entity, 'locked') %}
+          locked_all
+        {% elif is_state(lock_in_entity, 'locked') %}
+          locked_in
+        {% elif is_state(lock_out_entity, 'locked') %}
+          locked_out
+        {% else %}
+          unlocked
+        {% endif %}
+
+  - choose:
+      # Keep lock state in sync with the schedule - covers scheduled
+      # ticks, reconnects, and the periodic safety check, all at once
+      - conditions:
+          - condition: trigger
+            id:
+              - curfew_start_tick
+              - curfew_end_tick
+              - reconnect
+              - reconcile_tick
+          - condition: template
+            value_template: "{{ desired_mode != actual_mode }}"
+        sequence:
+          - choose:
+              - conditions: "{{ desired_mode == 'unlocked' }}"
+                sequence:
+                  - action: lock.unlock
+                    target:
+                      entity_id:
+                        - "{{ lock_in_entity }}"
+                        - "{{ lock_out_entity }}"
+                        - "{{ lock_all_entity }}"
+              - conditions: "{{ desired_mode == 'locked_in' }}"
+                sequence:
+                  - action: lock.unlock
+                    target:
+                      entity_id:
+                        - "{{ lock_out_entity }}"
+                        - "{{ lock_all_entity }}"
+                  - action: lock.lock
+                    target:
+                      entity_id: "{{ lock_in_entity }}"
+              - conditions: "{{ desired_mode == 'locked_out' }}"
+                sequence:
+                  - action: lock.unlock
+                    target:
+                      entity_id:
+                        - "{{ lock_in_entity }}"
+                        - "{{ lock_all_entity }}"
+                  - action: lock.lock
+                    target:
+                      entity_id: "{{ lock_out_entity }}"
+              - conditions: "{{ desired_mode == 'locked_all' }}"
+                sequence:
+                  - action: lock.unlock
+                    target:
+                      entity_id:
+                        - "{{ lock_in_entity }}"
+                        - "{{ lock_out_entity }}"
+                  - action: lock.lock
+                    target:
+                      entity_id: "{{ lock_all_entity }}"
+
+          - choose:
+              - conditions:
+                  - condition: trigger
+                    id: curfew_start_tick
+                sequence:
+                  - choose: []
+                    default: !input notify_on_curfew_start
+              - conditions:
+                  - condition: trigger
+                    id: curfew_end_tick
+                sequence:
+                  - choose: []
+                    default: !input notify_on_curfew_end
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - reconnect
+                      - reconcile_tick
+                sequence:
+                  - choose: []
+                    default: !input notify_on_reconnect_recovery
+
+      # Battery just crossed below threshold
+      - conditions:
+          - condition: trigger
+            id: battery_low
+        sequence:
+          - choose: []
+            default: !input notify_on_low_battery
+
+      # Daily check - still low, remind again
+      - conditions:
+          - condition: trigger
+            id: battery_daily
+          - condition: numeric_state
+            entity_id: !input battery_entity
+            below: !input battery_threshold
+        sequence:
+          - choose: []
+            default: !input notify_on_low_battery
+
+      # Cat came inside
+      - conditions:
+          - condition: trigger
+            id: pet_in
+        sequence:
+          - choose: []
+            default: !input notify_on_pet_in
+
+      # Cat went outside
+      - conditions:
+          - condition: trigger
+            id: pet_out
+        sequence:
+          - choose: []
+            default: !input notify_on_pet_out
+
+    default: []
+
+mode: single
