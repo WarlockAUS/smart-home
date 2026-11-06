@@ -1,11 +1,14 @@
 blueprint:
-  name: Blueprint Update Checker v1.2
+  name: Blueprint Update Checker v1.4
   description: >
     Periodically checks a blueprint's raw GitHub file for a version
     change (e.g. "v3.5" in the top-level blueprint name) and notifies
     you when the author has released a newer version than you last saw.
-    Requires a one-time 'rest_command: fetch_raw_text' entry in
-    configuration.yaml, and one input_text helper per tracked blueprint.
+    Always raises a persistent notification in the Home Assistant
+    frontend when a change is detected; a mobile push notification is
+    optional. Requires a one-time 'rest_command: fetch_raw_text' entry
+    in configuration.yaml, and one input_text helper per tracked
+    blueprint.
   domain: automation
   source_url: https://github.com/<owner>/smart-home/blob/main/blueprints/automation/blueprint_update_checker.yaml
   input:
@@ -48,10 +51,26 @@ blueprint:
       selector:
         entity:
           domain: input_text
-    notify_service:
-      name: Notify Service
+    enable_mobile_notify:
+      name: Enable Mobile Push Notification
+      description: >
+        If enabled, also sends a push notification via the selected
+        notify target when an update is detected, in addition to the
+        persistent notification (which always fires regardless of
+        this setting).
+      default: true
       selector:
-        text: {}
+        boolean: {}
+    notify_target:
+      name: Notify Target
+      description: >
+        Select the notify entity to send the optional mobile push to
+        (e.g. your phone). Only required if "Enable Mobile Push
+        Notification" is turned on.
+      default: ""
+      selector:
+        entity:
+          domain: notify
     check_time:
       name: Daily Check Time
       default: "09:00:00"
@@ -64,7 +83,8 @@ variables:
   blueprint_label: !input blueprint_label
   version_regex: !input version_regex
   version_tracker: !input version_tracker
-  notify_service: !input notify_service
+  enable_mobile_notify: !input enable_mobile_notify
+  notify_target: !input notify_target
 
 trigger:
   - trigger: time
@@ -87,6 +107,7 @@ action:
       stored_version: "{{ states(version_tracker) }}"
 
   - choose:
+      # First run — establish a baseline, don't alert
       - conditions:
           - condition: template
             value_template: "{{ stored_version in ['unknown', '', 'unavailable'] }}"
@@ -97,18 +118,31 @@ action:
             data:
               value: "{{ latest_version }}"
 
+      # Version has changed since we last checked — alert and update tracker
       - conditions:
           - condition: template
             value_template: "{{ latest_version != 'unknown' and latest_version != stored_version }}"
         sequence:
-          - action: "{{ notify_service }}"
+          - action: persistent_notification.create
             data:
-              title: "📦 Blueprint update available"
+              notification_id: "blueprint_update_{{ blueprint_label }}"
+              title: "📦 {{ blueprint_label }} update available"
               message: >-
-                {{ blueprint_label }} has a new version: {{ latest_version }}
-                (you have {{ stored_version }}).
-              data:
-                tag: "blueprint_update_{{ blueprint_label }}"
+                A new version ({{ latest_version }}) is available. You
+                were tracking {{ stored_version }}. Re-import the
+                blueprint, then dismiss this notification.
+          - if:
+              - condition: template
+                value_template: "{{ enable_mobile_notify and notify_target != '' }}"
+            then:
+              - action: notify.send_message
+                target:
+                  entity_id: "{{ notify_target }}"
+                data:
+                  title: "📦 Blueprint update available"
+                  message: >-
+                    {{ blueprint_label }} has a new version:
+                    {{ latest_version }} (you have {{ stored_version }}).
           - action: input_text.set_value
             target:
               entity_id: !input version_tracker
